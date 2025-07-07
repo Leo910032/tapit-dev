@@ -1,19 +1,18 @@
-// app/dashboard/general components/Preview.jsx - SMART RELOAD SYSTEM
+// app/dashboard/general components/Preview.jsx - UPDATED FOR FIREBASE AUTH
 "use client"
 import Image from 'next/image';
 import { useEffect, useState, useRef } from 'react';
+import { useAuth } from "@/contexts/AuthContext";
 import "../../styles/3d.css";
-import { getSessionCookie } from '@/lib/authentication/session';
-import { fetchUserData } from '@/lib/fetch data/fetchUserData';
 import { fireApp } from "@/important/firebase";
-import { collection, doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 
 export default function Preview() {
-    const [username, setUsername] = useState("");
+    const { user, userData, loading: authLoading } = useAuth();
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [iframeKey, setIframeKey] = useState(0); // For forcing iframe reload
-    const [lastContentHash, setLastContentHash] = useState(''); // Track content changes
+    const [iframeKey, setIframeKey] = useState(0);
+    const [lastContentHash, setLastContentHash] = useState('');
     const iframeRef = useRef(null);
 
     // 🔧 Function to force iframe reload (only when content changes)
@@ -27,35 +26,34 @@ export default function Preview() {
             try {
                 console.log('🔍 Preview: Starting initialization...');
                 
-                const sessionUsername = getSessionCookie("adminLinker");
-                console.log('🔍 Preview: Session username:', sessionUsername);
-                
-                if (sessionUsername === undefined) {
-                    console.log('❌ Preview: No session username found');
-                    setError('No session found');
+                // Wait for Firebase Auth to load
+                if (authLoading) {
+                    console.log('⏳ Preview: Waiting for Firebase Auth...');
+                    return;
+                }
+
+                // Check if user is authenticated
+                if (!user) {
+                    console.log('❌ Preview: No authenticated user');
+                    setError('No authenticated user');
                     setIsLoading(false);
                     return;
                 }
 
-                console.log('🔍 Preview: Fetching user data...');
-                const data = await fetchUserData(sessionUsername);
-                console.log('🔍 Preview: User data result:', data);
-                
-                if (data?.username) {
-                    console.log('✅ Preview: Setting username:', data.username);
-                    setUsername(data.username);
-                    setError(null);
-                    
-                    // 🔧 Start listening for content changes after we have the username
-                    setupContentListener(data.username, sessionUsername);
-                } else {
-                    console.log('⚠️ Preview: No username in data, using session username');
-                    setUsername(sessionUsername);
-                    setError(null);
-                    
-                    // Still setup listener with session username
-                    setupContentListener(sessionUsername, sessionUsername);
+                // Check if we have user data
+                if (!userData) {
+                    console.log('❌ Preview: No user data available');
+                    setError('No user data available');
+                    setIsLoading(false);
+                    return;
                 }
+
+                console.log('✅ Preview: User authenticated:', user.email);
+                console.log('✅ Preview: User data available:', userData.username);
+                
+                // Setup content listener with Firebase UID
+                setupContentListener(user.uid, userData.username);
+                setError(null);
                 
             } catch (err) {
                 console.error('❌ Preview: Error during initialization:', err);
@@ -66,16 +64,11 @@ export default function Preview() {
         }
 
         // 🔧 Setup real-time listener for profile content changes
-        async function setupContentListener(profileUsername, sessionUsername) {
+        function setupContentListener(userId, username) {
             try {
-                console.log('🔍 Setting up content change listener for:', profileUsername);
+                console.log('🔍 Setting up content change listener for user:', userId);
                 
-                // Get the actual user ID for Firestore
-                const userId = await fetchUserData(sessionUsername);
-                if (!userId) return;
-
-                const collectionRef = collection(fireApp, "AccountData");
-                const docRef = doc(collectionRef, userId);
+                const docRef = doc(fireApp, "AccountData", userId);
 
                 // Listen for changes in real-time
                 const unsubscribe = onSnapshot(docRef, (docSnap) => {
@@ -89,6 +82,7 @@ export default function Preview() {
                             bio: data.bio || '',
                             profilePhoto: data.profilePhoto || '',
                             selectedTheme: data.selectedTheme || '',
+                            username: data.username || '',
                             // Add other fields that should trigger a reload
                         };
                         
@@ -96,8 +90,6 @@ export default function Preview() {
                         
                         if (lastContentHash && lastContentHash !== newContentHash) {
                             console.log('📝 Content changed detected, reloading preview');
-                            console.log('🔍 Old hash:', lastContentHash.substring(0, 50) + '...');
-                            console.log('🔍 New hash:', newContentHash.substring(0, 50) + '...');
                             
                             // Small delay to ensure changes are saved
                             setTimeout(() => {
@@ -123,7 +115,7 @@ export default function Preview() {
         }
 
         initializePreview();
-    }, []); // Empty dependency array - runs once on mount
+    }, [user, userData, authLoading, lastContentHash]); // Dependencies include Firebase auth state
 
     useEffect(() => {
         // 3D animation setup - only run if elements exist
@@ -218,9 +210,12 @@ export default function Preview() {
         reloadPreview();
     };
 
-    // 🔧 Show loading state until we have a username
-    const showIframe = !isLoading && username && !error;
-    const showLoading = isLoading || (!username && !error);
+    // 🔧 Determine what to show
+    const showIframe = !authLoading && !isLoading && user && userData && !error;
+    const showLoading = authLoading || isLoading || (!userData && !error);
+
+    // Get username for iframe URL
+    const previewUsername = userData?.username || user?.email?.split('@')[0] || 'preview';
 
     return (
         <div className="w-[35rem] md:grid hidden place-items-center border-l ml-4 relative">
@@ -229,8 +224,10 @@ export default function Preview() {
             {process.env.NODE_ENV === 'development' && (
                 <div className="absolute top-4 left-4 z-50 bg-black bg-opacity-75 text-white text-xs p-2 rounded max-w-xs">
                     <div className="font-bold mb-1">🔍 Preview Status:</div>
-                    <div>Loading: {isLoading ? 'Yes' : 'No'}</div>
-                    <div>Username: {username || 'None'}</div>
+                    <div>Auth Loading: {authLoading ? 'Yes' : 'No'}</div>
+                    <div>Preview Loading: {isLoading ? 'Yes' : 'No'}</div>
+                    <div>User: {user?.email || 'None'}</div>
+                    <div>Username: {userData?.username || 'None'}</div>
                     <div>Show iframe: {showIframe ? 'Yes' : 'No'}</div>
                     <div>Iframe key: {iframeKey}</div>
                     <div>Content hash: {lastContentHash ? '✅' : '❌'}</div>
@@ -278,14 +275,14 @@ export default function Preview() {
                             {showIframe ? (
                                 // 🔧 Smart iframe with key-based reloading
                                 <iframe 
-                                    key={`preview-${username}-${iframeKey}`} // Only changes when content changes
+                                    key={`preview-${previewUsername}-${iframeKey}`}
                                     ref={iframeRef}
-                                    src={`https://www.tapit.fr/${username}?preview=true&v=${iframeKey}`}
+                                    src={`https://www.tapit.fr/${previewUsername}?preview=true&v=${iframeKey}`}
                                     frameBorder="0" 
                                     className='h-full bg-white w-full'
-                                    title={`Preview for ${username}`}
+                                    title={`Preview for ${previewUsername}`}
                                     onLoad={() => {
-                                        console.log(`✅ Preview iframe loaded (v${iframeKey}) for:`, username);
+                                        console.log(`✅ Preview iframe loaded (v${iframeKey}) for:`, previewUsername);
                                     }}
                                     onError={(e) => {
                                         console.error('❌ Preview iframe failed to load:', e);

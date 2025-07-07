@@ -1,67 +1,101 @@
-// app/dashboard/general components/FirebaseAuthCheck.jsx - Updated Auth Check for Firebase
+// app/dashboard/general components/FirebaseAuthCheck.jsx - UPDATED
 "use client"
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 
 export default function FirebaseAuthCheck() {
-    const { user, loading } = useAuth();
+    const { user, userData, loading, error } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
     
     useEffect(() => {
-        // Don't redirect while loading
-        if (loading) return;
-        
-        // Skip authentication check for public routes
-        const publicRoutes = [
-            '/', 
-            '/login', 
-            '/signup', 
-            '/forgot-password', 
-            '/reset-password',
-            '/nfc-cards' // Add any other public routes
-        ];
-        
-        const isPublicRoute = publicRoutes.some(route => 
-            pathname === route || pathname?.startsWith(route + '/')
-        );
-        
-        if (isPublicRoute) {
-            console.log('🔵 Skipping auth check for public route:', pathname);
+        // Skip authentication check for NFC routes
+        if (pathname?.startsWith('/nfc-cards')) {
+            console.log('🔵 Skipping Firebase auth check for NFC route:', pathname);
             return;
         }
 
-        // Redirect to login if not authenticated
+        // Skip authentication check for public routes
+        if (pathname === '/' || 
+            pathname?.startsWith('/login') || 
+            pathname?.startsWith('/signup') || 
+            pathname?.startsWith('/forgot-password') || 
+            pathname?.startsWith('/reset-password')) {
+            console.log('🔵 Skipping Firebase auth check for public route:', pathname);
+            return;
+        }
+
+        // Wait for auth to load
+        if (loading) {
+            console.log('⏳ Firebase auth loading...');
+            return;
+        }
+
+        // Check for authentication errors
+        if (error) {
+            console.log('❌ Firebase auth error:', error);
+            router.push("/login");
+            return;
+        }
+
+        // Check if user is authenticated
         if (!user) {
-            console.log('❌ Auth check failed, redirecting to login from:', pathname);
-            
-            // Preserve the current URL as returnTo parameter
-            const returnTo = encodeURIComponent(pathname || '/dashboard');
-            router.push(`/login?returnTo=${returnTo}`);
+            console.log('❌ Firebase auth check failed, redirecting to login from:', pathname);
+            router.push("/login");
+            return;
+        }
+
+        // Check if user data exists
+        if (!userData) {
+            console.log('⚠️ User authenticated but no user data, staying on loading...');
             return;
         }
 
         console.log('✅ Firebase auth check passed for:', pathname, user.email);
-    }, [user, loading, router, pathname]);
+    }, [user, userData, loading, error, router, pathname]);
 
-    // Show loading state while checking authentication
+    // Show loading while checking auth
     if (loading) {
         return (
-            <div className="fixed inset-0 bg-white bg-opacity-80 flex items-center justify-center z-50">
+            <div className="fixed inset-0 bg-white bg-opacity-90 flex items-center justify-center z-50">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-themeGreen mx-auto mb-4"></div>
-                    <p className="text-gray-600">Checking authentication...</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Checking authentication...</p>
                 </div>
             </div>
         );
     }
 
-    // Don't render anything if user is not authenticated (will redirect)
-    if (!user) {
-        return null;
+    // Show error state
+    if (error) {
+        return (
+            <div className="fixed inset-0 bg-white bg-opacity-90 flex items-center justify-center z-50">
+                <div className="text-center">
+                    <p className="text-red-600 mb-4">Authentication Error</p>
+                    <button 
+                        onClick={() => router.push('/login')}
+                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                    >
+                        Go to Login
+                    </button>
+                </div>
+            </div>
+        );
     }
 
-    // User is authenticated, don't render anything (let the page continue)
+    // Show loading if user exists but no user data
+    if (user && !userData) {
+        return (
+            <div className="fixed inset-0 bg-white bg-opacity-90 flex items-center justify-center z-50">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Setting up your profile...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // If everything is good, render nothing (let the page load)
     return null;
 }
