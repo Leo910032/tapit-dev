@@ -1,119 +1,143 @@
-// app/dashboard/(dashboard pages)/appearance/elements/TextDetails.jsx - FIXED for Firebase Auth
+// app/dashboard/appearance/elements/ThemeCard.jsx - FIXED for Firebase Auth
 "use client"
 
-import { useEffect, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext"; // ✅ 1. Use the central Auth Context
-import { useTranslation } from "@/lib/useTranslation";
-import { useDebounce } from "@/LocalHooks/useDebounce";
 import { fireApp } from "@/important/firebase";
+// ❌ Removed the old, problematic session checker
+// import { testForActiveSession } from "@/lib/authentication/testForActiveSession";
+import { updateTheme, updateThemeTextColour } from "@/lib/update data/updateTheme";
 import { collection, doc, onSnapshot } from "firebase/firestore";
-import { updateDisplayName, updateBio } from "@/lib/update data/updateProfile"; // Assuming these are updated
+import Image from "next/image";
+import { useEffect, useState } from "react";
+import { FaCheck } from "react-icons/fa6";
+import { useTranslation } from "@/lib/useTranslation";
+import { useAuth } from "@/contexts/AuthContext"; // ✅ Add the new Firebase Auth context
 
-export default function TextDetails() {
+export default function ThemeCard({ type, pic, text, themeId = "custom" }) {
     const { t } = useTranslation();
-    const { user, loading: authLoading } = useAuth(); // ✅ 2. Get user and loading state from context
+    const { user, loading: authLoading } = useAuth(); // ✅ Get user and loading state from context
+    const [isSelectedTheme, setIsSelectedTheme] = useState(false);
+    const [themeColor, setThemeColor] = useState("");
 
-    const [displayName, setDisplayName] = useState("");
-    const [myBio, setMyBio] = useState("");
-    const [isInitialDataLoaded, setIsInitialDataLoaded] = useState(false); // ✅ 3. Better state flag
-
-    const debounceDisplayName = useDebounce(displayName, 500);
-    const debounceMyBio = useDebounce(myBio, 500);
-
-    // Effect to fetch and listen for real-time data
-    useEffect(() => {
-        // Don't do anything until authentication is resolved
-        if (authLoading || !user) {
-            return;
-        }
-
-        console.log('🔍 TextDetails: Setting up listener for user:', user.uid);
-        const docRef = doc(fireApp, "AccountData", user.uid); // ✅ 4. Use the correct Firebase UID
-
-        const unsubscribe = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const { displayName: newDisplayName, bio: newBio } = docSnap.data();
-                console.log('📝 TextDetails: Received data ->', { newDisplayName, newBio });
-                
-                // Set state from Firestore
-                setDisplayName(newDisplayName || "");
-                setMyBio(newBio || "");
-
-                // Mark that initial data has loaded to enable debounced updates
-                setIsInitialDataLoaded(true);
-            } else {
-                console.warn('⚠️ TextDetails: No document found for this user.');
-            }
-        }, (error) => {
-            console.error("❌ TextDetails: Error fetching data:", error);
-        });
-
-        // Cleanup the listener when the component unmounts
-        return () => {
-            console.log('🧹 TextDetails: Cleaning up listener.');
-            unsubscribe();
+    // This helper function remains the same
+    const getThemeNameForUpdate = (themeId) => {
+        const themeMap = {
+            'custom': 'Custom', 'matrix': 'Matrix', 'new_mario': 'New Mario',
+            'pebble_blue': 'Pebble Blue', 'pebble_yellow': 'Pebble Yellow', 'pebble_pink': 'Pebble Pink',
+            'cloud_red': 'Cloud Red', 'cloud_green': 'Cloud Green', 'cloud_blue': 'Cloud Blue',
+            'breeze_pink': 'Breeze Pink', 'breeze_orange': 'Breeze Orange', 'breeze_green': 'Breeze Green',
+            'rainbow': 'Rainbow', 'confetti': 'Confetti', '3d_blocks': '3D Blocks',
+            'starry_night': 'Starry Night', 'lake_white': 'Lake White', 'lake_black': 'Lake Black'
         };
+        return themeMap[themeId] || 'Custom';
+    };
 
-    }, [user, authLoading]); // ✅ 5. Re-run when user or loading state changes
+    const specialThemes = ["new_mario", "matrix"];
 
-    // Effect to update display name after user stops typing
+    // This function remains the same, as the underlying update functions should be refactored
+    // to get the current user from Firebase Auth directly.
+    const handleUpdateTheme = async() => {
+        const themeName = getThemeNameForUpdate(themeId);
+        await updateTheme(themeName, themeColor);
+        if(!specialThemes.includes(themeId)) return;
+        await updateThemeTextColour(themeColor);
+    }
+
+    // This effect remains the same
     useEffect(() => {
-        // Prevent running on the initial data load
-        if (!isInitialDataLoaded || authLoading || !user) {
+        if(!isSelectedTheme) return;
+        switch (themeId) {
+            case 'lake_black':
+            case 'starry_night':
+            case '3d_blocks':
+                setThemeColor("#fff");
+                break;
+            case 'matrix':
+                setThemeColor("#0f0");
+                break;
+            case 'new_mario':
+            case 'default':
+                setThemeColor("#000");
+                break;
+        }
+    }, [themeId, isSelectedTheme]);
+    
+    // 🔧 This is the main part that has been fixed
+    useEffect(() => {
+        // Don't run this effect until Firebase Auth has loaded and we have a user
+        if (authLoading || !user) {
+            console.log('⏳ ThemeCard: Waiting for authentication...');
             return;
         }
-        console.log('🔄 TextDetails: Updating displayName to ->', debounceDisplayName);
-        updateDisplayName(debounceDisplayName); // This function should use getAuth() to find the user UID
 
-    }, [debounceDisplayName]);
-
-    // Effect to update bio after user stops typing
-    useEffect(() => {
-        // Prevent running on the initial data load
-        if (!isInitialDataLoaded || authLoading || !user) {
-            return;
+        function fetchTheme() {
+            console.log(`✅ ThemeCard: Setting up listener for user: ${user.uid}`);
+            
+            const collectionRef = collection(fireApp, "AccountData");
+            // ✅ Use the correct Firebase user UID instead of the old session system
+            const docRef = doc(collectionRef, user.uid);
+        
+            const unsubscribe = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const { selectedTheme } = docSnap.data();
+                    const themeName = getThemeNameForUpdate(themeId);
+                    setIsSelectedTheme(selectedTheme === themeName);
+                } else {
+                    console.warn(`⚠️ ThemeCard: No document found for user: ${user.uid}`);
+                }
+            }, (error) => {
+                console.error(`❌ ThemeCard: Firebase listener error:`, error);
+            });
+            
+            // Return the cleanup function
+            return unsubscribe;
         }
-        console.log('🔄 TextDetails: Updating bio to ->', debounceMyBio);
-        updateBio(debounceMyBio); // This function should also use getAuth() to find the user UID
+        
+        const cleanup = fetchTheme();
+        return () => {
+            if (cleanup) {
+                console.log('🧹 ThemeCard: Cleaning up listener.');
+                cleanup();
+            }
+        };
+    }, [themeId, user, authLoading]); // ✅ Add user and authLoading to the dependency array
 
-    }, [debounceMyBio]);
-
-    // ✅ 6. Show a loading skeleton while authenticating
+    // ✅ Add a loading skeleton to prevent errors and layout shifts while authenticating
     if (authLoading) {
         return (
-            <div className="flex px-6 pb-6 pt-2 flex-col gap-2 animate-pulse">
-                <div className="h-[60px] bg-gray-200 rounded-lg"></div>
-                <div className="h-[76px] bg-gray-200 rounded-lg"></div>
+            <div className="min-w-[8rem] flex-1 flex flex-col animate-pulse">
+                <div className="w-full h-[13rem] rounded-lg bg-gray-200"></div>
+                <div className="py-3 mt-1 h-4 w-3/4 rounded bg-gray-200"></div>
             </div>
         );
     }
-    
+
     return (
-        <div className="flex px-6 pb-6 pt-2 flex-col gap-2">
-            <div className="flex-1 relative pt-2 flex items-center rounded-lg bg-black bg-opacity-[0.05] focus-within:border-black focus-within:border-2 border border-transparent">
-                <input
-                    type="text"
-                    className="flex-1 px-4 placeholder-shown:px-3 py-4 sm:text-base text-sm font-semibold outline-none opacity-100 bg-transparent peer appearance-none"
-                    placeholder=" "
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    value={displayName} // Correctly bind to state
-                />
-                <label className="absolute px-3 pointer-events-none top-[.25rem] left-1 text-sm text-main-green peer-placeholder-shown:top-2/4 peer-placeholder-shown:-translate-y-1/2 peer-placeholder-shown:text-base peer-placeholder-shown:bg-transparent peer-placeholder-shown:text-slate-500 peer-placeholder-shown:left-0 opacity-70 transition duration-[250] ease-linear">
-                    {t('textDetails.profile_title')}
-                </label>
+        <>
+            <div className={`min-w-[8rem] flex-1 items-center flex flex-col group`} onClick={handleUpdateTheme}>
+                {type !== 1 ?
+                    <>
+                        <div className="w-full h-[13rem] border border-dashed rounded-lg relative group-hover:bg-black group-hover:bg-opacity-[0.05] border-black grid place-items-center cursor-pointer">
+                            <span className="uppercase max-w-[5rem] sm:text-xl text-base text-center">
+                                {t("themes.create_your_own")}
+                            </span>
+                            {isSelectedTheme && <div className="h-full w-full absolute top-0 left-0 bg-black bg-opacity-[0.5] grid place-items-center z-10 text-white text-xl">
+                                <FaCheck />
+                            </div>}
+                        </div>
+                        <span className="py-3 text-sm">{t("themes.custom")}</span>
+                    </>
+                    :
+                    <>
+                        <div className="w-full h-[13rem] border rounded-lg group-hover:scale-105 relative group-active:scale-90 grid place-items-center cursor-pointer overflow-hidden">
+                            <Image src={pic} alt="bg-image" height={1000} width={1000} className="min-w-full h-full object-cover" />
+                            {isSelectedTheme && <div className="h-full w-full absolute top-0 left-0 bg-black bg-opacity-[0.5] grid place-items-center z-10 text-white text-xl">
+                                <FaCheck />
+                            </div>}
+                        </div>
+                        <span className="py-3 text-sm">{text}</span>
+                    </>
+                }
             </div>
-            <div className="flex-1 relative pt-2 flex items-center rounded-lg bg-black bg-opacity-[0.05] focus-within:border-black focus-within:border-[2px] border border-transparent">
-                <textarea
-                    className="flex-1 px-4 placeholder-shown:px-3 py-4 sm:text-md text-sm outline-none opacity-100 bg-transparent peer appearance-none"
-                    cols="30"
-                    rows="2"
-                    onChange={(e) => setMyBio(e.target.value)}
-                    value={myBio}
-                ></textarea>
-                <label className="absolute px-3 pointer-events-none top-[.25rem] left-1 text-sm text-main-green peer-placeholder-shown:top-2/4 peer-placeholder-shown:-translate-y-1/2 peer-placeholder-shown:text-base peer-placeholder-shown:bg-transparent peer-placeholder-shown:text-slate-500 peer-placeholder-shown:left-0 opacity-70 transition duration-[250] ease-linear">
-                    {t('textDetails.bio')}
-                </label>
-            </div>
-        </div>
+        </>
     );
 }
