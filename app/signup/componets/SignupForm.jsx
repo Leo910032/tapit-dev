@@ -1,14 +1,14 @@
-// app/signup/componets/SignupForm.jsx - FIXED VERSION
+// app/signup/components/SignupForm.jsx - Updated with Firebase Auth
 "use client"
-import { useDebounce } from "@/LocalHooks/useDebounce";
-import { fireApp } from "@/important/firebase";
-import { createAccount } from "@/lib/authentication/createAccount";
-import { signInWithGoogle, handleGoogleRedirectResult } from "@/lib/authentication/googleAuth";
-import { setSessionCookie } from "@/lib/authentication/session";
+import { useAuth } from "@/contexts/AuthContext";
+import { 
+  registerWithEmailPassword, 
+  signInWithGoogleFirebase, 
+  handleGoogleRedirectResultFirebase 
+} from "@/lib/authentication/firebaseAuth";
 import { useTranslation } from "@/lib/useTranslation";
 import { validateEmail, validatePassword } from "@/lib/utilities";
 import GoogleSignInButton from "@/components/GoogleSignInButton";
-import { collection, onSnapshot } from "firebase/firestore";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -20,34 +20,27 @@ export default function SignupForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { t, isInitialized, locale } = useTranslation();
+    const { user, loading: authLoading } = useAuth();
 
     const [seePassword, setSeePassword] = useState(true);
     const [email, setEmail] = useState("");
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [canProceed, setCanProceed] = useState(false);
-    const [existingUsernames, setExistingUsernames] = useState([]);
-    const [existingEmails, setExistingEmails] = useState([]);
     const [errorMessage, setErrorMessage] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-    const unsubscribeRef = useRef(null);
     const hasCheckedRedirect = useRef(false);
-
-    const debouncedUsername = useDebounce(username, 500);
-    const debouncedEmail = useDebounce(email, 500);
 
     // Function to determine redirect URL
     const getRedirectUrl = useCallback(() => {
-        // Check if there's a return URL in the query params
         const returnUrl = searchParams?.get('returnUrl');
         if (returnUrl) {
             console.log('🔄 Using return URL:', returnUrl);
             return returnUrl;
         }
 
-        // Check if user came from NFC checkout
         if (typeof window !== 'undefined') {
             const referrer = document.referrer;
             if (referrer.includes('/nfc-cards')) {
@@ -56,10 +49,18 @@ export default function SignupForm() {
             }
         }
 
-        // Default to dashboard
         console.log('🔄 Using default redirect: /dashboard');
         return '/dashboard';
     }, [searchParams]);
+
+    // Redirect if already authenticated
+    useEffect(() => {
+        if (!authLoading && user) {
+            const redirectUrl = getRedirectUrl();
+            console.log('🔄 User already authenticated, redirecting to:', redirectUrl);
+            router.push(redirectUrl);
+        }
+    }, [user, authLoading, router, getRedirectUrl]);
 
     const translations = useMemo(() => {
         if (!isInitialized) return {};
@@ -86,18 +87,18 @@ export default function SignupForm() {
         };
     }, [t, isInitialized]);
 
+    // Handle Google redirect result
     useEffect(() => {
-        if (!isInitialized || hasCheckedRedirect.current) return;
+        if (!isInitialized || hasCheckedRedirect.current || authLoading) return;
+        
         const checkRedirectResult = async () => {
             try {
                 hasCheckedRedirect.current = true;
-                const result = await handleGoogleRedirectResult(locale);
+                const result = await handleGoogleRedirectResultFirebase(locale);
                 if (result) {
                     setIsGoogleLoading(true);
-                    setSessionCookie("adminLinker", result.userId, (60 * 60));
                     toast.success(result.isNewUser ? translations.accountCreated : translations.googleSignInSuccess);
                     
-                    // Use context-aware redirect
                     const redirectUrl = getRedirectUrl();
                     setTimeout(() => { 
                         router.push(redirectUrl); 
@@ -109,18 +110,19 @@ export default function SignupForm() {
             }
         };
         checkRedirectResult();
-    }, [isInitialized, locale, translations, router, getRedirectUrl]);
+    }, [isInitialized, locale, translations, router, getRedirectUrl, authLoading]);
 
+    // Google Sign-In Handler
     const handleGoogleSignIn = useCallback(async () => {
         if (isGoogleLoading || isLoading) return;
         setIsGoogleLoading(true);
+        
         try {
-            const result = await signInWithGoogle(locale);
+            const result = await signInWithGoogleFirebase(locale);
             if (result.requiresRedirect) return;
-            setSessionCookie("adminLinker", result.userId, (60 * 60));
+            
             toast.success(result.isNewUser ? translations.accountCreated : translations.googleSignInSuccess);
             
-            // Use context-aware redirect
             const redirectUrl = getRedirectUrl();
             setTimeout(() => { 
                 router.push(redirectUrl); 
@@ -131,27 +133,31 @@ export default function SignupForm() {
         }
     }, [isGoogleLoading, isLoading, locale, translations, router, getRedirectUrl]);
 
+    // Email/Password Signup Handler
     const handleSignUp = useCallback(async (e) => {
         e.preventDefault();
-        if (!canProceed || isLoading || isGoogleLoading) throw new Error("Cannot proceed with signup.");
+        if (!canProceed || isLoading || isGoogleLoading) return;
+        
         setIsLoading(true);
-        const data = { email, username, password, language: locale };
+        setErrorMessage("");
+        
         try {
-            const userId = await createAccount(data);
-            setSessionCookie("adminLinker", `${userId}`, (60 * 60));
+            const result = await registerWithEmailPassword(email, password, username, locale);
             
-            // Use context-aware redirect
             const redirectUrl = getRedirectUrl();
             setTimeout(() => { 
                 router.push(redirectUrl); 
             }, 1000);
-            return userId;
+            
+            return result;
         } catch (error) {
             setIsLoading(false);
+            setErrorMessage(error.message);
             throw error;
         }
-    }, [canProceed, isLoading, isGoogleLoading, email, username, password, locale, router, getRedirectUrl]);
+    }, [canProceed, isLoading, isGoogleLoading, email, password, username, locale, router, getRedirectUrl]);
 
+    // Form submission with toast
     const signupHandler = (e) => {
         e.preventDefault();
         toast.promise(handleSignUp(e), {
@@ -161,37 +167,34 @@ export default function SignupForm() {
         });
     };
 
-    useEffect(() => {
-        if (unsubscribeRef.current) return;
-        const collectionRef = collection(fireApp, "accounts");
-        const unsubscribe = onSnapshot(collectionRef, (querySnapshot) => {
-            const usernames = [], emails = [];
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                if (data.username) usernames.push(String(data.username).toLowerCase());
-                if (data.email) emails.push(String(data.email).toLowerCase());
-            });
-            setExistingUsernames(usernames);
-            setExistingEmails(emails);
-        });
-        unsubscribeRef.current = unsubscribe;
-        return () => { if (unsubscribeRef.current) unsubscribeRef.current(); };
-    }, []);
-
+    // Form validation
     useEffect(() => {
         if (isLoading || isGoogleLoading) return;
-        const isEmailValid = validateEmail(email), isEmailTaken = existingEmails.includes(debouncedEmail.toLowerCase());
-        const isUsernameTaken = existingUsernames.includes(debouncedUsername.toLowerCase()), isPasswordValid = validatePassword(password);
+        
+        const isEmailValid = validateEmail(email);
+        const isPasswordValid = validatePassword(password);
+        const isUsernameValid = username.length >= 3;
+        
         let error = "";
-        if (debouncedEmail && !isEmailValid) error = translations.validation.invalidEmail;
-        else if (debouncedEmail && isEmailTaken) error = translations.validation.emailTaken;
-        else if (debouncedUsername && isUsernameTaken) error = translations.validation.usernameTaken;
+        if (email && !isEmailValid) error = translations.validation.invalidEmail;
         else if (password && !isPasswordValid) error = translations.validation.passwordLength;
+        else if (username && !isUsernameValid) error = "Username must be at least 3 characters";
+        
         setErrorMessage(error);
-        setCanProceed(email !== "" && username !== "" && password !== "" && isEmailValid && !isEmailTaken && !isUsernameTaken && isPasswordValid);
-    }, [debouncedUsername, debouncedEmail, password, existingUsernames, existingEmails, isLoading, isGoogleLoading, translations]);
+        setCanProceed(
+            email !== "" && 
+            username !== "" && 
+            password !== "" && 
+            isEmailValid && 
+            isPasswordValid && 
+            isUsernameValid
+        );
+    }, [email, username, password, isLoading, isGoogleLoading, translations]);
 
-    if (!isInitialized) return <div>Loading...</div>;
+    if (!isInitialized || authLoading) return <div>Loading...</div>;
+
+    // Don't render if user is already authenticated
+    if (user) return null;
 
     return (
         <div className="flex-1 sm:p-12 px-4 py-8 flex flex-col overflow-y-auto">
@@ -201,28 +204,86 @@ export default function SignupForm() {
             <section className="mx-auto py-10 w-full sm:w-5/6 md:w-3/4 lg:w-2/3 xl:w-1/2 flex-1 flex flex-col justify-center">
                 <p className="text-2xl sm:text-5xl md:text-3xl font-extrabold text-center">{translations.title}</p>
                 <div className="py-8 sm:py-12 flex flex-col gap-4 sm:gap-6 w-full">
-                    <GoogleSignInButton onClick={handleGoogleSignIn} isLoading={isGoogleLoading} disabled={isLoading || isGoogleLoading} text={translations.continueWithGoogle} />
+                    <GoogleSignInButton 
+                        onClick={handleGoogleSignIn} 
+                        isLoading={isGoogleLoading} 
+                        disabled={isLoading || isGoogleLoading} 
+                        text={translations.continueWithGoogle} 
+                    />
                     <div className="flex items-center gap-4 my-2">
-                        <div className="flex-1 h-px bg-gray-300"></div><span className="text-sm text-gray-500">or</span><div className="flex-1 h-px bg-gray-300"></div>
+                        <div className="flex-1 h-px bg-gray-300"></div>
+                        <span className="text-sm text-gray-500">or</span>
+                        <div className="flex-1 h-px bg-gray-300"></div>
                     </div>
                     <form className="flex flex-col gap-4 sm:gap-6 w-full" onSubmit={signupHandler}>
                         <div className="flex items-center py-2 sm:py-3 px-2 sm:px-6 rounded-md myInput bg-black bg-opacity-5 text-base sm:text-lg w-full">
-                            <input type="email" placeholder={translations.emailPlaceholder} className="outline-none border-none bg-transparent ml-1 py-3 flex-1 text-sm sm:text-base" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={isLoading || isGoogleLoading} />
+                            <input 
+                                type="email" 
+                                placeholder={translations.emailPlaceholder} 
+                                className="outline-none border-none bg-transparent ml-1 py-3 flex-1 text-sm sm:text-base" 
+                                value={email} 
+                                onChange={(e) => setEmail(e.target.value)} 
+                                required 
+                                disabled={isLoading || isGoogleLoading} 
+                            />
                         </div>
                         <div className="flex items-center py-2 sm:py-3 px-2 sm:px-6 rounded-md myInput bg-black bg-opacity-5 text-base sm:text-lg w-full">
-                            <input type="text" placeholder={translations.usernamePlaceholder} className="outline-none border-none bg-transparent ml-1 py-3 flex-1 text-sm sm:text-base" value={username} onChange={(e) => setUsername(e.target.value)} required disabled={isLoading || isGoogleLoading} />
+                            <input 
+                                type="text" 
+                                placeholder={translations.usernamePlaceholder} 
+                                className="outline-none border-none bg-transparent ml-1 py-3 flex-1 text-sm sm:text-base" 
+                                value={username} 
+                                onChange={(e) => setUsername(e.target.value)} 
+                                required 
+                                disabled={isLoading || isGoogleLoading} 
+                            />
                         </div>
                         <div className="flex items-center relative py-2 sm:py-3 px-2 sm:px-6 rounded-md bg-black bg-opacity-5 text-base sm:text-lg myInput">
-                            <input type={seePassword ? "password" : "text"} placeholder={translations.passwordPlaceholder} className="peer outline-none border-none bg-transparent py-3 ml-1 flex-1 text-sm sm:text-base" value={password} onChange={(e) => setPassword(e.target.value)} required disabled={isLoading || isGoogleLoading} />
-                            {seePassword ? <FaEyeSlash className={`opacity-60 cursor-pointer ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} /> : <FaEye className={`opacity-60 cursor-pointer text-themeGreen ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} />}
+                            <input 
+                                type={seePassword ? "password" : "text"} 
+                                placeholder={translations.passwordPlaceholder} 
+                                className="peer outline-none border-none bg-transparent py-3 ml-1 flex-1 text-sm sm:text-base" 
+                                value={password} 
+                                onChange={(e) => setPassword(e.target.value)} 
+                                required 
+                                disabled={isLoading || isGoogleLoading} 
+                            />
+                            {seePassword ? (
+                                <FaEyeSlash 
+                                    className={`opacity-60 cursor-pointer ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} 
+                                    onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} 
+                                />
+                            ) : (
+                                <FaEye 
+                                    className={`opacity-60 cursor-pointer text-themeGreen ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} 
+                                    onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} 
+                                />
+                            )}
                         </div>
-                        {!isLoading && !isGoogleLoading && errorMessage && <span className="text-sm text-red-500 block">{errorMessage}</span>}
-                        <button type="submit" disabled={!canProceed || isLoading || isGoogleLoading} className={`rounded-md py-4 sm:py-5 grid place-items-center font-semibold transition-all duration-200 ${canProceed && !isLoading && !isGoogleLoading ? "cursor-pointer active:scale-95 active:opacity-40 hover:scale-[1.025] bg-themeGreen mix-blend-screen" : "cursor-default opacity-50"}`}>
-                            {!isLoading ? <span className="nopointer">{translations.submit}</span> : <Image src={"https://linktree.sirv.com/Images/gif/loading.gif"} width={25} height={25} alt="loading" className="mix-blend-screen" />}
+                        {!isLoading && !isGoogleLoading && errorMessage && (
+                            <span className="text-sm text-red-500 block">{errorMessage}</span>
+                        )}
+                        <button 
+                            type="submit" 
+                            disabled={!canProceed || isLoading || isGoogleLoading} 
+                            className={`rounded-md py-4 sm:py-5 grid place-items-center font-semibold transition-all duration-200 ${
+                                canProceed && !isLoading && !isGoogleLoading 
+                                    ? "cursor-pointer active:scale-95 active:opacity-40 hover:scale-[1.025] bg-themeGreen mix-blend-screen" 
+                                    : "cursor-default opacity-50"
+                            }`}
+                        >
+                            {!isLoading ? (
+                                <span className="nopointer">{translations.submit}</span>
+                            ) : (
+                                <Image src={"https://linktree.sirv.com/Images/gif/loading.gif"} width={25} height={25} alt="loading" className="mix-blend-screen" />
+                            )}
                         </button>
                     </form>
                 </div>
-                <p className="text-center sm:text-base text-sm"><span className="opacity-60">{translations.haveAccount}</span> <Link href={"/login"} className="text-themeGreen">{translations.logIn}</Link></p>
+                <p className="text-center sm:text-base text-sm">
+                    <span className="opacity-60">{translations.haveAccount}</span> 
+                    <Link href={"/login"} className="text-themeGreen">{translations.logIn}</Link>
+                </p>
             </section>
         </div>
     );

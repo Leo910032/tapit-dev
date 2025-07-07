@@ -1,13 +1,13 @@
-// app/login/components/LoginForm.jsx - Add return URL handling
+// app/login/components/LoginForm.jsx - Updated with Firebase Auth
 "use client"
-import { useDebounce } from "@/LocalHooks/useDebounce";
-import { fireApp } from "@/important/firebase";
-import { loginAccount } from "@/lib/authentication/login";
-import { signInWithGoogle, handleGoogleRedirectResult } from "@/lib/authentication/googleAuth";
-import { setSessionCookie } from "@/lib/authentication/session";
+import { useAuth } from "@/contexts/AuthContext";
+import { 
+  loginWithEmailPassword, 
+  signInWithGoogleFirebase, 
+  handleGoogleRedirectResultFirebase 
+} from "@/lib/authentication/firebaseAuth";
 import { useTranslation } from "@/lib/useTranslation";
 import GoogleSignInButton from "@/app/components/GoogleSignInButton";
-import { collection, onSnapshot } from "firebase/firestore";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -20,21 +20,25 @@ function LoginFormContent() {
     const searchParams = useSearchParams();
     const returnTo = searchParams.get('returnTo') || '/dashboard';
     const { t, isInitialized, locale } = useTranslation();
+    const { user, loading: authLoading } = useAuth();
     
     const [seePassword, setSeePassword] = useState(true);
-    const [username, setUsername] = useState("");
+    const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [canProceed, setCanProceed] = useState(false);
-    const [existingUsernames, setExistingUsernames] = useState([]);
     const [errorMessage, setErrorMessage] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
     
-    const unsubscribeRef = useRef(null);
     const hasCheckedRedirect = useRef(false);
-    
-    const debouncedUsername = useDebounce(username, 500);
-    const debouncedPassword = useDebounce(password, 500);
+
+    // Redirect if already authenticated
+    useEffect(() => {
+        if (!authLoading && user) {
+            console.log('🔄 User already authenticated, redirecting to:', returnTo);
+            router.push(returnTo);
+        }
+    }, [user, authLoading, router, returnTo]);
 
     const translations = useMemo(() => {
         if (!isInitialized) return {};
@@ -42,10 +46,8 @@ function LoginFormContent() {
             validating: t('login.validating'),
             invalidCredentials: t('login.invalid_credentials'),
             success: t('login.success'),
-            incorrectPassword: t('login.incorrect_password'),
-            usernameNotRegistered: t('login.username_not_registered'),
             title: t('login.title'),
-            usernamePlaceholder: t('login.username_placeholder'),
+            emailPlaceholder: t('login.email_placeholder') || 'Email',
             passwordPlaceholder: t('login.password_placeholder'),
             forgotPassword: t('login.forgot_password'),
             submit: t('login.submit'),
@@ -57,16 +59,16 @@ function LoginFormContent() {
         };
     }, [t, isInitialized]);
 
+    // Handle Google redirect result
     useEffect(() => {
-        if (!isInitialized || hasCheckedRedirect.current) return;
+        if (!isInitialized || hasCheckedRedirect.current || authLoading) return;
         
         const checkRedirectResult = async () => {
             try {
                 hasCheckedRedirect.current = true;
-                const result = await handleGoogleRedirectResult(locale);
+                const result = await handleGoogleRedirectResultFirebase(locale);
                 if (result) {
                     setIsGoogleLoading(true);
-                    setSessionCookie("adminLinker", result.userId, (60 * 60));
                     toast.success(translations.googleSignInSuccess);
                     setTimeout(() => {
                         router.push(returnTo);
@@ -78,41 +80,40 @@ function LoginFormContent() {
             }
         };
         checkRedirectResult();
-    }, [isInitialized, locale, translations, router, returnTo]);
+    }, [isInitialized, locale, translations, router, returnTo, authLoading]);
 
+    // Email/Password Login Handler
     const handleLogin = useCallback(async(e) => {
         e.preventDefault();
-        if (!canProceed || isLoading) throw new Error('Cannot proceed with login');
+        if (!canProceed || isLoading) return;
         
         setIsLoading(true);
-        const data = { log_username: username, log_password: password };
+        setErrorMessage("");
 
         try {
-            const userId = await loginAccount(data);
-            setSessionCookie("adminLinker", `${userId}`, (60 * 60));
+            const result = await loginWithEmailPassword(email, password);
+            console.log('🔄 Login successful, redirecting to:', returnTo);
+            
             setTimeout(() => { 
-                console.log('🔄 Redirecting to:', returnTo);
                 router.push(returnTo); 
             }, 1000);
+            
         } catch (error) {
             setIsLoading(false);
-            let errorMsg = existingUsernames.includes(String(username).toLowerCase()) 
-                ? translations.incorrectPassword 
-                : translations.usernameNotRegistered;
-            setErrorMessage(errorMsg);
-            throw new Error(errorMsg);
+            setErrorMessage(error.message);
+            throw error;
         }
-    }, [canProceed, isLoading, username, password, existingUsernames, translations, router, returnTo]);
+    }, [canProceed, isLoading, email, password, router, returnTo]);
 
+    // Google Sign-In Handler
     const handleGoogleSignIn = useCallback(async () => {
         if (isGoogleLoading || isLoading) return;
         setIsGoogleLoading(true);
         
         try {
-            const result = await signInWithGoogle(locale);
+            const result = await signInWithGoogleFirebase(locale);
             if (result.requiresRedirect) return;
             
-            setSessionCookie("adminLinker", result.userId, (60 * 60));
             toast.success(translations.googleSignInSuccess);
             setTimeout(() => { 
                 console.log('🔄 Redirecting to:', returnTo);
@@ -124,40 +125,37 @@ function LoginFormContent() {
         }
     }, [isGoogleLoading, isLoading, locale, translations, router, returnTo]);
 
+    // Form submission with toast
     const loginHandler = useCallback((e) => {
         e.preventDefault();
         toast.promise(handleLogin(e), {
             loading: translations.validating,
-            error: translations.invalidCredentials,
+            error: (err) => err.message || translations.invalidCredentials,
             success: translations.success,
-        }, { /* toast styles */ });
+        });
     }, [handleLogin, translations]);
 
-    useEffect(() => {
-        if (unsubscribeRef.current) return;
-        const collectionRef = collection(fireApp, "accounts");
-        const unsubscribe = onSnapshot(collectionRef, (querySnapshot) => {
-            const usernames = [];
-            querySnapshot.forEach((doc) => { if (doc.data().username) usernames.push(String(doc.data().username).toLowerCase()); });
-            setExistingUsernames(usernames);
-        });
-        unsubscribeRef.current = unsubscribe;
-        return () => { if (unsubscribeRef.current) unsubscribeRef.current(); };
-    }, []);
-
+    // Form validation
     useEffect(() => {
         if (isLoading) return;
-        if (username !== "" && password !== "") {
+        
+        const emailValid = email.includes('@') && email.includes('.');
+        const passwordValid = password.length >= 6;
+        
+        if (email !== "" && password !== "" && emailValid && passwordValid) {
             setCanProceed(true);
-            if (!errorMessage.includes(translations.incorrectPassword) && !errorMessage.includes(translations.usernameNotRegistered)) {
+            if (errorMessage && !errorMessage.includes('password') && !errorMessage.includes('email')) {
                 setErrorMessage("");
             }
         } else {
             setCanProceed(false);
         }
-    }, [debouncedUsername, debouncedPassword, isLoading, errorMessage, translations]);
+    }, [email, password, isLoading, errorMessage]);
 
-    if (!isInitialized) return <div>Loading...</div>;
+    if (!isInitialized || authLoading) return <div>Loading...</div>;
+
+    // Don't render if user is already authenticated
+    if (user) return null;
 
     return (
         <div className="flex-1 sm:p-12 px-4 py-8 flex flex-col overflow-y-auto">
@@ -168,11 +166,16 @@ function LoginFormContent() {
                 <p className="text-2xl sm:text-5xl md:text-3xl font-extrabold text-center">{translations.title}</p>
                 {returnTo !== '/dashboard' && (
                     <p className="text-center text-blue-600 mt-2 text-sm">
-                        Youll be redirected back to complete your purchase
+                        You'll be redirected back to complete your purchase
                     </p>
                 )}
                 <div className="py-8 sm:py-12 flex flex-col gap-4 sm:gap-6 w-full">
-                    <GoogleSignInButton onClick={handleGoogleSignIn} isLoading={isGoogleLoading} disabled={isLoading || isGoogleLoading} text={translations.continueWithGoogle} />
+                    <GoogleSignInButton 
+                        onClick={handleGoogleSignIn} 
+                        isLoading={isGoogleLoading} 
+                        disabled={isLoading || isGoogleLoading} 
+                        text={translations.continueWithGoogle} 
+                    />
                     <div className="flex items-center gap-4 my-2">
                         <div className="flex-1 h-px bg-gray-300"></div>
                         <span className="text-sm text-gray-500">or</span>
@@ -180,22 +183,66 @@ function LoginFormContent() {
                     </div>
                     <form className="flex flex-col gap-4 sm:gap-6 w-full" onSubmit={loginHandler}>
                         <div className="flex items-center py-2 sm:py-3 px-2 sm:px-6 rounded-md myInput bg-black bg-opacity-5 text-base sm:text-lg w-full">
-                            <input type="text" placeholder={translations.usernamePlaceholder} className="outline-none border-none bg-transparent ml-1 py-3 flex-1 text-sm sm:text-base" value={username} onChange={(e) => setUsername(e.target.value)} required disabled={isLoading || isGoogleLoading} />
+                            <input 
+                                type="email" 
+                                placeholder={translations.emailPlaceholder} 
+                                className="outline-none border-none bg-transparent ml-1 py-3 flex-1 text-sm sm:text-base" 
+                                value={email} 
+                                onChange={(e) => setEmail(e.target.value)} 
+                                required 
+                                disabled={isLoading || isGoogleLoading} 
+                            />
                         </div>
                         <div className="flex items-center relative py-2 sm:py-3 px-2 sm:px-6 rounded-md bg-black bg-opacity-5 text-base sm:text-lg myInput">
-                            <input type={seePassword ? "password" : "text"} placeholder={translations.passwordPlaceholder} className="peer outline-none border-none bg-transparent py-3 ml-1 flex-1 text-sm sm:text-base" value={password} onChange={(e) => setPassword(e.target.value)} required disabled={isLoading || isGoogleLoading} />
-                            {seePassword ? <FaEyeSlash className={`opacity-60 cursor-pointer ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} /> : <FaEye className={`opacity-60 cursor-pointer text-themeGreen ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} />}
+                            <input 
+                                type={seePassword ? "password" : "text"} 
+                                placeholder={translations.passwordPlaceholder} 
+                                className="peer outline-none border-none bg-transparent py-3 ml-1 flex-1 text-sm sm:text-base" 
+                                value={password} 
+                                onChange={(e) => setPassword(e.target.value)} 
+                                required 
+                                disabled={isLoading || isGoogleLoading} 
+                            />
+                            {seePassword ? (
+                                <FaEyeSlash 
+                                    className={`opacity-60 cursor-pointer ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} 
+                                    onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} 
+                                />
+                            ) : (
+                                <FaEye 
+                                    className={`opacity-60 cursor-pointer text-themeGreen ${(isLoading || isGoogleLoading) ? 'pointer-events-none' : ''}`} 
+                                    onClick={() => !(isLoading || isGoogleLoading) && setSeePassword(!seePassword)} 
+                                />
+                            )}
                         </div>
-                        <Link href={"/forgot-password"} className="w-fit hover:rotate-2 hover:text-themeGreen origin-left">{translations.forgotPassword}</Link>
-                        <button type="submit" disabled={!canProceed || isLoading || isGoogleLoading} className={`rounded-md py-4 sm:py-5 grid place-items-center font-semibold transition-all duration-200 ${canProceed && !isLoading && !isGoogleLoading ? "cursor-pointer active:scale-95 active:opacity-40 hover:scale-[1.025] bg-themeGreen mix-blend-screen" : "cursor-default opacity-50"}`}>
-                            {!isLoading ? <span className="nopointer">{translations.submit}</span> : <Image src={"https://linktree.sirv.com/Images/gif/loading.gif"} width={25} height={25} alt="loading" className="mix-blend-screen" />}
+                        <Link href={"/forgot-password"} className="w-fit hover:rotate-2 hover:text-themeGreen origin-left">
+                            {translations.forgotPassword}
+                        </Link>
+                        <button 
+                            type="submit" 
+                            disabled={!canProceed || isLoading || isGoogleLoading} 
+                            className={`rounded-md py-4 sm:py-5 grid place-items-center font-semibold transition-all duration-200 ${
+                                canProceed && !isLoading && !isGoogleLoading 
+                                    ? "cursor-pointer active:scale-95 active:opacity-40 hover:scale-[1.025] bg-themeGreen mix-blend-screen" 
+                                    : "cursor-default opacity-50"
+                            }`}
+                        >
+                            {!isLoading ? (
+                                <span className="nopointer">{translations.submit}</span>
+                            ) : (
+                                <Image src={"https://linktree.sirv.com/Images/gif/loading.gif"} width={25} height={25} alt="loading" className="mix-blend-screen" />
+                            )}
                         </button>
-                        {!isLoading && !isGoogleLoading && errorMessage && <span className="text-sm text-red-500 text-center">{errorMessage}</span>}
+                        {!isLoading && !isGoogleLoading && errorMessage && (
+                            <span className="text-sm text-red-500 text-center">{errorMessage}</span>
+                        )}
                     </form>
                 </div>
                 <p className="text-center sm:text-base text-sm">
                     <span className="opacity-60">{translations.noAccount}</span> 
-                    <Link href={`/signup${returnTo !== '/dashboard' ? `?returnTo=${returnTo}` : ''}`} className="text-themeGreen"> {translations.signUp}</Link>
+                    <Link href={`/signup${returnTo !== '/dashboard' ? `?returnTo=${returnTo}` : ''}`} className="text-themeGreen"> 
+                        {translations.signUp}
+                    </Link>
                 </p>
             </section>
         </div>

@@ -1,8 +1,20 @@
-// Import the functions you need from the SDKs you need
+// important/firebase.js - Enhanced Firebase Configuration
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
-import { getAuth, GoogleAuthProvider } from "firebase/auth"; // ✅ Add Google Auth
+import { 
+  getAuth, 
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  updateProfile
+} from "firebase/auth";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -17,14 +29,29 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// Initialize services
 export const fireApp = getFirestore(app);
 export const appStorage = getStorage(app);
-
-// ✅ Initialize and export Firebase Auth
 export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
 
-// Configure Google provider to always prompt for account selection
+// Configure Google Auth Provider
+export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
     prompt: 'select_account'
 });
+
+// Export authentication functions for easy use
+export {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  updateProfile
+};
+
+export default app;
