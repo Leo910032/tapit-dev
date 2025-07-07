@@ -1,4 +1,4 @@
-// app/dashboard/layout.jsx - Updated Dashboard Layout
+// app/dashboard/layout.jsx - Updated for Firebase Auth
 import { Inter } from 'next/font/google'
 import NavBar from '../components/General Components/NavBar'
 import FirebaseAuthCheck from './general components/FirebaseAuthCheck'
