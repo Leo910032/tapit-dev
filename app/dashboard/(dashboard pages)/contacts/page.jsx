@@ -663,6 +663,19 @@ export default function ContactsPage() {
         </div>
     );
 }
+// Add these imports after your existing imports
+function EditContactModal({ contact, isOpen, onClose, onSave }) {
+    // You need to implement this component or import it from somewhere
+    // For now, return null to prevent the error
+    if (!isOpen) return null;
+    return <div>Edit Contact Modal - Implement this component</div>;
+}
+
+function MobileFilters({ filter, setFilter, searchTerm, setSearchTerm, counts, locationStats, onMapView }) {
+    // You need to implement this component or import it from somewhere
+    // For now, return null to prevent the error
+    return <div>Mobile Filters - Implement this component</div>;
+}
 
 const ContactsMap = dynamic(() => import('./components/ContactsMap'), {
     ssr: false,
@@ -785,7 +798,7 @@ function ContactCard({ contact, onEdit, onStatusUpdate, onContactAction, onMapVi
                         {/* Display the old message field only if it exists and it's not a dynamic contact */}
                         {!isDynamicContact && contact.message && (
                             <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                                <p className="text-sm text-gray-700 italic">"{contact.message}"</p>
+<p className="text-sm text-gray-700 italic">&quot;{contact.message}&quot;</p>
                             </div>
                         )}
 
