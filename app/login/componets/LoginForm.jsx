@@ -166,7 +166,7 @@ function LoginFormContent() {
                 <p className="text-2xl sm:text-5xl md:text-3xl font-extrabold text-center">{translations.title}</p>
                 {returnTo !== '/dashboard' && (
                     <p className="text-center text-blue-600 mt-2 text-sm">
-                        You'll be redirected back to complete your purchase
+                        Youll be redirected back to complete your purchase
                     </p>
                 )}
                 <div className="py-8 sm:py-12 flex flex-col gap-4 sm:gap-6 w-full">
