@@ -1,4 +1,4 @@
-// File: next.conig.js
+// File: next.coig.js
 
 const path = require('path');
 
