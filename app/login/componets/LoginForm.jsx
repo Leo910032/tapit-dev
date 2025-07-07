@@ -140,7 +140,7 @@ function LoginFormContent() {
                     </form>
                 </div>
                 <p className="text-center sm:text-base text-sm">
-                    <span className="opacity-60">Don't have an account?</span> 
+                    <span className="opacity-60">Dont have an account?</span> 
                     <Link href={`/signup${returnTo !== '/dashboard' ? `?returnTo=${returnTo}` : ''}`} className="text-themeGreen"> Sign up</Link>
                 </p>
             </section>
