@@ -1,9 +1,9 @@
-// app/dashboard/layout.jsx - TEMPORARY DEBUGGING VERSION #1
+// app/dashboard/layout.jsx - FINAL DEBUGGING STEP
 "use client"
 
 import { Inter } from 'next/font/google'
-import NavBar from '../components/General Components/NavBar'
-// import Preview from './general components/Preview' // <-- Temporarily commented out
+// import NavBar from '../components/General Components/NavBar' // <-- COMMENT THIS OUT
+// import Preview from './general components/Preview' // This should still be commented out
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
@@ -20,21 +20,23 @@ export default function DashboardLayout({ children }) {
         }
     }, [user, loading, router]);
 
+    // This gatekeeper logic is correct.
     if (loading) {
-        return <div className="fixed inset-0 bg-white z-[9999] flex items-center justify-center">...Authenticating...</div>;
+        return <div className="fixed inset-0 ...">Authenticating...</div>;
     }
     
     if (user && !userData) {
-        return <div className="fixed inset-0 bg-white z-[9999] flex items-center justify-center">...Setting up profile...</div>;
+        return <div className="fixed inset-0 ...">Setting up your profile...</div>;
     }
     
     if (user && userData) {
         return (
             <div className='w-screen h-screen ...'>
-                <NavBar />
+                {/* <NavBar /> */} {/* <-- AND COMMENT IT OUT HERE */}
+                
                 <div className="flex ...">
                     {children}
-                    {/* <Preview /> */} {/* <-- Temporarily commented out */}
+                    {/* <Preview /> */}
                 </div>
             </div>
         )
