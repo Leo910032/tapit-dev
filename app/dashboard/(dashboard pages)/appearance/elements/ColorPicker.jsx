@@ -1,30 +1,31 @@
+// app/dashboard/appearance/elements/ColorPicker.jsx - FIXED for Firebase Auth
 "use client"
 
 import { useDebounce } from "@/LocalHooks/useDebounce";
 import { fireApp } from "@/important/firebase";
-import { testForActiveSession } from "@/lib/authentication/testForActiveSession";
+import { useAuth } from "@/contexts/AuthContext";
 import { updateThemeBackgroundColor, updateThemeBtnColor, updateThemeBtnFontColor, updateThemeBtnShadowColor, updateThemeTextColour } from "@/lib/update data/updateTheme";
 import { isValidHexCode } from "@/lib/utilities";
 import { collection, doc, onSnapshot } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 
 export default function ColorPicker({colorFor}) {
+    const { user, userData, loading: authLoading } = useAuth();
     const [colorText, setColorText] = useState(colorFor === 4 ? "#000000" : "#e8edf5");
     const debounceColor = useDebounce(colorText, 500);
     const [validColor, setValidColor] = useState(1);
     const [colorHasLoaded, setColorHasLoaded] = useState(false);
     const [isHydrated, setIsHydrated] = useState(false);
-    const [isUpdating, setIsUpdating] = useState(false); // ✅ Add updating state
+    const [isUpdating, setIsUpdating] = useState(false);
     const colorPickRef = useRef();
 
-    // ✅ Fix hydration by ensuring client-side only rendering
+    // Fix hydration by ensuring client-side only rendering
     useEffect(() => {
         setIsHydrated(true);
     }, []);
 
-    
     const handleUpdateTheme = async(text) => {
-        // ✅ Prevent multiple simultaneous updates
+        // Prevent multiple simultaneous updates
         if (isUpdating) return;
         setIsUpdating(true);
         
@@ -50,38 +51,42 @@ export default function ColorPicker({colorFor}) {
                     await updateThemeBackgroundColor(text);
                     break;
             }
+        } catch (error) {
+            console.error('❌ ColorPicker: Error updating theme:', error);
         } finally {
             setIsUpdating(false);
         }
     }
-  
-    // ✅ FIXED: Remove the problematic useEffect that was causing infinite loop
+
+    // Update theme when debounced color changes
     useEffect(() => {
         // Only update when debounced color changes and component has loaded
-        if (!colorHasLoaded || isUpdating) {
+        if (!colorHasLoaded || isUpdating || authLoading) {
             return;
         }
 
         if (colorText !== "" && isValidHexCode(colorText)) {
+            console.log('🎨 ColorPicker: Updating theme color:', colorText);
             handleUpdateTheme(colorText);
         }
         
         // Update validity state
         setValidColor(isValidHexCode(colorText));
-    }, [debounceColor]); // ✅ Only depend on debounceColor
+    }, [debounceColor, colorHasLoaded, isUpdating, authLoading]);
 
-    // ✅ REMOVED the problematic useEffect that was calling handleUpdateTheme again
-
+    // Fetch theme data using Firebase Auth
     useEffect(() => {
-        // ✅ Only fetch theme after hydration
-        if (!isHydrated) return;
+        // Wait for hydration and authentication
+        if (!isHydrated || authLoading || !user || !userData) {
+            console.log('⏳ ColorPicker: Waiting for auth...');
+            return;
+        }
         
         function fetchTheme() {
-            const currentUser = testForActiveSession();
-            if (!currentUser) return;
+            console.log('🎨 ColorPicker: Setting up theme listener for user:', user.uid);
             
             const collectionRef = collection(fireApp, "AccountData");
-            const docRef = doc(collectionRef, `${currentUser}`);
+            const docRef = doc(collectionRef, user.uid); // Use Firebase UID
         
             const unsubscribe = onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
@@ -109,18 +114,22 @@ export default function ColorPicker({colorFor}) {
                             break;
                     }
                     
-                    // ✅ Only update if the color actually changed to prevent loops
+                    console.log('🎨 ColorPicker: Theme color received:', newColor);
+                    
+                    // Only update if the color actually changed to prevent loops
                     if (newColor !== colorText) {
                         setColorText(newColor);
                     }
                     
-                    // ✅ Mark as loaded after first fetch
+                    // Mark as loaded after first fetch
                     if (!colorHasLoaded) {
                         setColorHasLoaded(true);
                     }
+                } else {
+                    console.warn('⚠️ ColorPicker: No theme data found for user');
                 }
             }, (error) => {
-                console.error("Error fetching theme:", error);
+                console.error("❌ ColorPicker: Error fetching theme:", error);
             });
             
             return unsubscribe;
@@ -128,12 +137,13 @@ export default function ColorPicker({colorFor}) {
         
         const unsubscribe = fetchTheme();
         return () => {
+            console.log('🧹 ColorPicker: Cleaning up theme listener');
             if (unsubscribe) unsubscribe();
         };
-    }, [colorFor, isHydrated]); // ✅ Remove colorText from dependencies to prevent loop
+    }, [colorFor, isHydrated, authLoading, user, userData]); // Include Firebase auth dependencies
 
-    // ✅ Show loading state until hydrated
-    if (!isHydrated) {
+    // Show loading state until hydrated and authenticated
+    if (!isHydrated || authLoading || !user || !userData) {
         return (
             <div className="pt-6 flex items-center">
                 <div className="h-12 w-12 mr-4 rounded-lg bg-gray-200 animate-pulse"></div>

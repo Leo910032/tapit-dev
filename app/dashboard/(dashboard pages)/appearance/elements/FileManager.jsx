@@ -1,8 +1,8 @@
-// app/dashboard/(dashboard pages)/appearance/elements/FileManager.jsx
+// app/dashboard/(dashboard pages)/appearance/elements/FileManager.jsx - FIXED for Firebase Auth
 "use client"
 
-// Test imports one by one
 import { useRef, useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext"; // ✅ Add Firebase Auth
 
 // Test 1: Basic utilities
 import { generateUniqueId } from "@/lib/utilities";
@@ -14,7 +14,6 @@ import { collection, doc, onSnapshot } from "firebase/firestore";
 
 // Test 3: Your custom imports
 import { updateProfileFile } from "@/lib/fileUpload";
-import { testForActiveSession } from "@/lib/authentication/testForActiveSession";
 import { useTranslation } from "@/lib/useTranslation";
 
 // Test 4: External libraries
@@ -24,6 +23,7 @@ import { toast } from "react-hot-toast";
 import { FaCheck, FaFile, FaDownload, FaTrash } from "react-icons/fa6";
 
 export default function FileManager() {
+    const { user, userData, loading: authLoading } = useAuth(); // ✅ Use Firebase Auth
     const { t } = useTranslation();
     const [uploadedFile, setUploadedFile] = useState('');
     const [currentFile, setCurrentFile] = useState(null);
@@ -32,7 +32,7 @@ export default function FileManager() {
     const [previewing, setPreviewing] = useState(false);
     const [fileSize, setFileSize] = useState(0);
     const [fileName, setFileName] = useState('');
-    const [customFileName, setCustomFileName] = useState(''); // New state for custom name
+    const [customFileName, setCustomFileName] = useState('');
     const inputRef = useRef();
     const formRef = useRef();
 
@@ -117,8 +117,8 @@ export default function FileManager() {
 
         return {
             url: fileUrl,
-            name: customFileName.trim() || getFileNameWithoutExtension(uploadedFile.name), // Use custom name
-            originalFileName: uploadedFile.name, // Store original filename
+            name: customFileName.trim() || getFileNameWithoutExtension(uploadedFile.name),
+            originalFileName: uploadedFile.name,
             size: uploadedFile.size,
             type: fileExtension,
             uploadedAt: new Date().toISOString()
@@ -202,27 +202,85 @@ export default function FileManager() {
         setPreviewing(false);
     };
 
+    // ✅ FIXED: Use Firebase Auth instead of old session system
     useEffect(() => {
         function fetchCurrentFile() {
-            const currentUser = testForActiveSession();
-            if (!currentUser) return;
-            
-            const collectionRef = collection(fireApp, "AccountData");
-            const docRef = doc(collectionRef, `${currentUser}`);
-
-            const unsubscribe = onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const { profileFile } = docSnap.data();
-                    setCurrentFile(profileFile || null);
+            try {
+                console.log('🔍 FileManager: Setting up file listener...');
+                
+                // Wait for auth to load
+                if (authLoading) {
+                    console.log('⏳ FileManager: Auth still loading...');
+                    return;
                 }
-            });
 
-            return () => unsubscribe();
+                // Check if user is authenticated
+                if (!user) {
+                    console.log('❌ FileManager: No authenticated user');
+                    return;
+                }
+
+                // Check if we have user data
+                if (!userData) {
+                    console.log('❌ FileManager: No user data available');
+                    return;
+                }
+
+                console.log('✅ FileManager: Setting up listener for user:', user.uid);
+                
+                // ✅ Use Firebase UID instead of old session
+                const collectionRef = collection(fireApp, "AccountData");
+                const docRef = doc(collectionRef, user.uid); // Use Firebase UID
+
+                const unsubscribe = onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        const profileFile = data.profileFile || null;
+                        console.log('📁 FileManager: Current file updated:', profileFile?.name || 'None');
+                        setCurrentFile(profileFile);
+                    } else {
+                        console.log('❌ FileManager: No document found for user');
+                        setCurrentFile(null);
+                    }
+                }, (error) => {
+                    console.error('❌ FileManager: Listener error:', error);
+                });
+
+                return () => {
+                    console.log('🔧 FileManager: Cleaning up listener');
+                    unsubscribe();
+                };
+                
+            } catch (error) {
+                console.error('❌ FileManager: Error setting up listener:', error);
+            }
         }
         
         const cleanup = fetchCurrentFile();
         return cleanup;
-    }, []);
+    }, [user, userData, authLoading]); // ✅ Dependencies on Firebase auth state
+
+    // ✅ Don't render while auth is loading or no user
+    if (authLoading) {
+        return (
+            <div className="w-full p-6 border-t">
+                <div className="animate-pulse">
+                    <div className="h-4 bg-gray-200 rounded w-1/3 mb-4"></div>
+                    <div className="h-12 bg-gray-200 rounded"></div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!user || !userData) {
+        return (
+            <div className="w-full p-6 border-t">
+                <div className="text-center text-gray-500">
+                    <p className="text-sm">Please authenticate to manage files</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="w-full p-6 border-t">

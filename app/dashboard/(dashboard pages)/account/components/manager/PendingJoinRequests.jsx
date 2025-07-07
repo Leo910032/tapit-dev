@@ -1,21 +1,25 @@
 // app/dashboard/(dashboard pages)/account/components/manager/PendingJoinRequests.jsx
 
+"use client"
+
 import { useState, useEffect } from 'react';
 import { useTranslation } from '@/lib/useTranslation';
 import { toast } from 'react-hot-toast';
 import { fireApp } from '@/important/firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
-import { testForActiveSession } from '@/lib/authentication/testForActiveSession';
+import { useAuth } from '@/contexts/AuthContext'; // ✅ 1. ADDED: Import the new Firebase Auth context
 
-
+// ❌ REMOVED: Old authentication import
+// import { testForActiveSession } from '@/lib/authentication/testForActiveSession';
 
 export const PendingJoinRequests = ({ teamData }) => {
     const { t } = useTranslation();
+    const { user, loading: authLoading } = useAuth(); // ✅ 2. ADDED: Use the hook to get the authenticated user and loading state
     const [pendingRequests, setPendingRequests] = useState([]);
     const [loading, setLoading] = useState(true);
     const [processingRequestId, setProcessingRequestId] = useState(null);
 
-    // Listen for pending join requests
+    // This useEffect for listening to requests is fine and does not need changes.
     useEffect(() => {
         if (!teamData?.teamId) {
             setLoading(false);
@@ -33,8 +37,6 @@ export const PendingJoinRequests = ({ teamData }) => {
             
             for (const docSnap of snapshot.docs) {
                 const requestData = docSnap.data();
-                
-                // Get user details for each request
                 try {
                     const userRef = doc(fireApp, "AccountData", requestData.userId);
                     const userSnap = await getDoc(userRef);
@@ -64,44 +66,58 @@ export const PendingJoinRequests = ({ teamData }) => {
         return () => unsubscribe();
     }, [teamData?.teamId]);
 
- // Replace the existing handler functions with these:
-const handleApproveRequest = async (requestId, userId) => {
-    setProcessingRequestId(requestId);
-    try {
-        const currentUserId = testForActiveSession();
+    // ✅ 3. REFACTORED: The handler functions now use the Firebase user UID.
+    const handleApproveRequest = async (requestId, userId) => {
+        setProcessingRequestId(requestId);
         
-        // Import the new approval function
-        const { approveJoinRequest } = await import('@/lib/teamManagement');
-        
-        const result = await approveJoinRequest(currentUserId, requestId);
-        toast.success(`${result.memberName} has been approved to join the team!`);
-        
-    } catch (error) {
-        console.error('Error approving request:', error);
-        toast.error(error.message || 'Failed to approve request');
-    } finally {
-        setProcessingRequestId(null);
-    }
-};
+        // Add a guard clause to ensure the user is logged in
+        if (!user) {
+            toast.error("You must be logged in to perform this action.");
+            setProcessingRequestId(null);
+            return;
+        }
 
-const handleRejectRequest = async (requestId) => {
-    setProcessingRequestId(requestId);
-    try {
-        const currentUserId = testForActiveSession();
+        try {
+            // Import the new approval function
+            const { approveJoinRequest } = await import('@/lib/teamManagement');
+            
+            // Pass the Firebase UID instead of the old session ID
+            const result = await approveJoinRequest(user.uid, requestId);
+            toast.success(`${result.memberName} has been approved to join the team!`);
+            
+        } catch (error) {
+            console.error('Error approving request:', error);
+            toast.error(error.message || 'Failed to approve request');
+        } finally {
+            setProcessingRequestId(null);
+        }
+    };
+
+    const handleRejectRequest = async (requestId) => {
+        setProcessingRequestId(requestId);
+
+        // Add a guard clause
+        if (!user) {
+            toast.error("You must be logged in to perform this action.");
+            setProcessingRequestId(null);
+            return;
+        }
         
-        // Import the new rejection function
-        const { rejectJoinRequest } = await import('@/lib/teamManagement');
-        
-        await rejectJoinRequest(currentUserId, requestId);
-        toast.success('Join request rejected');
-        
-    } catch (error) {
-        console.error('Error rejecting request:', error);
-        toast.error('Failed to reject request');
-    } finally {
-        setProcessingRequestId(null);
-    }
-};
+        try {
+            // Import the new rejection function
+            const { rejectJoinRequest } = await import('@/lib/teamManagement');
+            
+            // Pass the Firebase UID
+            await rejectJoinRequest(user.uid, requestId);
+            toast.success('Join request rejected');
+            
+        } catch (error) {
+            console.error('Error rejecting request:', error);
+            toast.error('Failed to reject request');
+        } finally {
+            setProcessingRequestId(null);
+        }
+    };
 
     if (loading) {
         return (
@@ -118,7 +134,7 @@ const handleRejectRequest = async (requestId) => {
     }
 
     if (pendingRequests.length === 0) {
-        return null; // Don't show the component if there are no pending requests
+        return null; 
     }
 
     return (
@@ -136,7 +152,6 @@ const handleRejectRequest = async (requestId) => {
                 {pendingRequests.map((request) => (
                     <div key={request.requestId} className="flex items-center justify-between p-4 border rounded-lg bg-orange-50 border-orange-200">
                         <div className="flex items-center gap-4">
-                            {/* Avatar */}
                             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center text-white font-semibold">
                                 {request.userDetails.profilePhoto ? (
                                     <img 
@@ -149,8 +164,6 @@ const handleRejectRequest = async (requestId) => {
                                     request.userDetails.username?.charAt(0).toUpperCase()
                                 )}
                             </div>
-
-                            {/* User Info */}
                             <div>
                                 <h4 className="font-medium text-gray-900">
                                     {request.userDetails.displayName || request.userDetails.username}
@@ -163,11 +176,11 @@ const handleRejectRequest = async (requestId) => {
                             </div>
                         </div>
 
-                        {/* Action Buttons */}
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => handleApproveRequest(request.requestId, request.userId)}
-                                disabled={processingRequestId === request.requestId}
+                                // ✅ 4. ADDED: Disable buttons if auth is loading or user is not logged in.
+                                disabled={processingRequestId === request.requestId || authLoading || !user}
                                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                             >
                                 {processingRequestId === request.requestId ? (
@@ -187,7 +200,7 @@ const handleRejectRequest = async (requestId) => {
                             
                             <button
                                 onClick={() => handleRejectRequest(request.requestId)}
-                                disabled={processingRequestId === request.requestId}
+                                disabled={processingRequestId === request.requestId || authLoading || !user}
                                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
