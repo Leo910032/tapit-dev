@@ -1,12 +1,10 @@
-// app/dashboard/(dashboard pages)/analytics/page.jsx - ENHANCED WITH TRAFFIC SOURCES
+// app/dashboard/(dashboard pages)/analytics/page.jsx - FIXED with Firebase Auth
 "use client"
 import React, { useEffect, useState } from "react";
-import { testForActiveSession } from "@/lib/authentication/testForActiveSession";
-import { fetchUserData } from "@/lib/fetch data/fetchUserData";
+import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "@/lib/useTranslation";
 import { fireApp } from "@/important/firebase";
 import { collection, doc, onSnapshot } from "firebase/firestore";
-import { fastUserLookup } from "@/lib/userLookup";
 
 // Import components
 import AnalyticsHeader from "./components/AnalyticsHeader";
@@ -15,14 +13,14 @@ import OverviewCards from "./components/OverviewCards";
 import PerformanceChart from "./components/PerformanceChart";
 import LinkTypeDistribution from "./components/LinkTypeDistribution";
 import LinkAnalyticsChart from "./components/LinkAnalyticsChart";
-import TrafficSourcesChart from "./components/TrafficSourceChart.jsx"; // ✅ 
+import TrafficSourcesChart from "./components/TrafficSourceChart.jsx";
 
 export default function AnalyticsPage() {
+    const { user, userData, loading: authLoading } = useAuth();
     const { t } = useTranslation();
     const [analytics, setAnalytics] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [username, setUsername] = useState("");
     const [isConnected, setIsConnected] = useState(false);
     const [selectedPeriod, setSelectedPeriod] = useState('all');
 
@@ -32,12 +30,13 @@ export default function AnalyticsPage() {
         const weekNumber = Math.ceil(((now - yearStart) / 86400000 + yearStart.getDay() + 1) / 7); 
         return `${now.getFullYear()}-W${weekNumber.toString().padStart(2, '0')}`; 
     };
+
     const getMonthKey = () => { 
         const now = new Date(); 
         return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`; 
     };
 
-    // ✅ ENHANCED: Process analytics data including traffic sources
+    // Process analytics data including traffic sources
     const processAnalyticsData = (data) => {
         const today = new Date().toISOString().split('T')[0];
         const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
@@ -57,13 +56,12 @@ export default function AnalyticsPage() {
                 monthClicks: data.monthlyClicks?.[monthKey] || 0,
                 createdAt: linkData.createdAt || new Date().toISOString(),
                 lastClicked: linkData.lastClicked,
-                // ✅ NEW: Include referrer data for links
                 referrerData: linkData.referrerData || {}
             }))
             .filter(link => link.totalClicks > 0)
             .sort((a, b) => (b.totalClicks || 0) - (a.totalClicks || 0));
 
-        // ✅ NEW: Process traffic sources data
+        // Process traffic sources data
         const trafficSources = data.trafficSources || {};
         
         // Calculate traffic source totals and trends
@@ -124,12 +122,9 @@ export default function AnalyticsPage() {
             dailyViews: data.dailyViews || {},
             dailyClicks: data.dailyClicks || {},
             topLinks,
-            // ✅ NEW: Include traffic sources data
             trafficSources: trafficSources,
             trafficSourceStats: trafficSourceStats,
-            // ✅ NEW: UTM campaign data
             campaigns: data.campaigns || {},
-            // ✅ NEW: Referrer breakdown
             referrerBreakdown: data.referrerBreakdown || {}
         };
     };
@@ -137,19 +132,38 @@ export default function AnalyticsPage() {
     useEffect(() => {
         const setupRealtimeAnalytics = async () => {
             try {
-                const currentUser = testForActiveSession();
-                if (!currentUser) {
+                console.log('📊 Analytics: Setting up real-time analytics...');
+                
+                // Wait for auth to load
+                if (authLoading) {
+                    console.log('⏳ Analytics: Auth still loading...');
+                    return;
+                }
+
+                // Check if user is authenticated
+                if (!user) {
+                    console.log('❌ Analytics: No authenticated user');
                     setError("Not authenticated");
                     setLoading(false);
                     return;
                 }
 
-                const userInfo = await fastUserLookup(currentUser) || await fetchUserData(currentUser);
-                if (userInfo?.username) setUsername(userInfo.username);
+                // Check if we have user data
+                if (!userData) {
+                    console.log('❌ Analytics: No user data available');
+                    setError("No user data available");
+                    setLoading(false);
+                    return;
+                }
 
-                const analyticsRef = doc(collection(fireApp, "Analytics"), currentUser);
+                console.log('✅ Analytics: Setting up listener for user:', user.uid);
+
+                const analyticsRef = doc(collection(fireApp, "Analytics"), user.uid);
+                
                 const unsubscribe = onSnapshot(analyticsRef, (docSnapshot) => {
+                    console.log('📊 Analytics data updated');
                     setIsConnected(true);
+                    
                     const data = docSnapshot.exists() ? docSnapshot.data() : {};
                     const processed = processAnalyticsData(data);
                     
@@ -157,35 +171,48 @@ export default function AnalyticsPage() {
                     setAnalytics(processed);
                     setLoading(false);
                 }, (err) => {
-                    console.error("Firebase listener error:", err);
+                    console.error("❌ Analytics Firebase listener error:", err);
                     setError("Failed to connect to real-time analytics.");
+                    setIsConnected(false);
                     setLoading(false);
                 });
-                return () => unsubscribe();
+
+                return () => {
+                    console.log('🧹 Analytics: Cleaning up listener');
+                    unsubscribe();
+                };
+                
             } catch (err) {
-                console.error("Setup error:", err);
+                console.error("❌ Analytics setup error:", err);
                 setLoading(false);
                 setError("Failed to load analytics data.");
             }
         };
-        setupRealtimeAnalytics();
-    }, []);
 
-    if (loading) {
+        setupRealtimeAnalytics();
+    }, [user, userData, authLoading]);
+
+    // Show loading while auth is loading or analytics is loading
+    if (authLoading || loading) {
         return (
             <div className="flex-1 flex items-center justify-center h-full">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900"></div>
-                <span className="ml-3 text-sm">Loading Analytics...</span>
+                <div className="flex items-center">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900"></div>
+                    <span className="ml-3 text-sm">
+                        {authLoading ? 'Loading Authentication...' : 'Loading Analytics...'}
+                    </span>
+                </div>
             </div>
         );
     }
 
-    if (error) {
+    // Show error if no user or error occurred
+    if (!user || error) {
         return (
             <div className="flex-1 flex items-center justify-center h-full">
                 <div className="text-center">
                     <div className="text-red-500 text-sm mb-2">⚠️ Error</div>
-                    <div className="text-gray-600 text-xs">{error}</div>
+                    <div className="text-gray-600 text-xs">{error || 'Not authenticated'}</div>
                 </div>
             </div>
         );
@@ -202,7 +229,7 @@ export default function AnalyticsPage() {
                                 {t('analytics.title') || 'Analytics'}
                             </h1>
                             <p className="text-xs text-gray-600 mt-1">
-                                @{username}
+                                @{userData?.username || user?.email?.split('@')[0]}
                             </p>
                         </div>
                         <div className="flex items-center text-xs">
@@ -252,7 +279,7 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
 
-                {/* ✅ NEW: Traffic Sources Chart */}
+                {/* Traffic Sources Chart */}
                 {analytics?.trafficSources && Object.keys(analytics.trafficSources).length > 0 && (
                     <TrafficSourcesChart analytics={analytics} />
                 )}
@@ -330,7 +357,6 @@ export default function AnalyticsPage() {
                                 <span className="text-gray-600">{t('analytics.active_links')}</span>
                                 <span className="font-medium">{analytics?.topLinks?.filter(link => link.totalClicks > 0).length || 0}</span>
                             </div>
-                            {/* ✅ NEW: Traffic source count */}
                             <div className="flex justify-between">
                                 <span className="text-gray-600">{t('analytics.traffic_sources') || 'Sources'}</span>
                                 <span className="font-medium">{analytics?.trafficSourceStats?.totalSources || 0}</span>
@@ -353,7 +379,6 @@ export default function AnalyticsPage() {
                                     }
                                 </span>
                             </div>
-                            {/* ✅ NEW: Conversion by top source */}
                             {analytics?.trafficSourceStats?.topSource && (
                                 <div className="flex justify-between">
                                     <span className="text-gray-600">{t('analytics.top_converter') || 'Top Conv.'}</span>
@@ -398,7 +423,6 @@ export default function AnalyticsPage() {
                                 {(analytics?.todayViews || 0) > (analytics?.yesterdayViews || 0) ? t('analytics.Growing') : t('analytics.Declining')}
                             </span>
                         </div>
-                        {/* ✅ NEW: Traffic source insights */}
                         {analytics?.trafficSourceStats?.totalSources > 0 && (
                             <div className="flex justify-between items-center pt-2 border-t border-purple-200">
                                 <span className="text-gray-600">{t('analytics.traffic_diversity') || 'Traffic Mix'}</span>
@@ -415,7 +439,7 @@ export default function AnalyticsPage() {
     );
 }
 
-// ✅ Helper function for source icons
+// Helper function for source icons
 function getSourceIcon(source) {
     const icons = {
         'instagram': '📸',
