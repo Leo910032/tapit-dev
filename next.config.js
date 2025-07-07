@@ -1,4 +1,4 @@
-// File: next.config.js
+// File: next.conig.js
 
 const path = require('path');
 
