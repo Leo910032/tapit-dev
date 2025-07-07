@@ -37,6 +37,7 @@ const nextConfig = {
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
+      '@/contexts': path.resolve(__dirname, 'lib/contexts'),
       '@/components': path.resolve(__dirname, 'app/components'),
       '@/important': path.resolve(__dirname, 'important'),
       '@/forget-password-pages': path.resolve(__dirname, 'app/(forget password pages)'),
